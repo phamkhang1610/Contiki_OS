@@ -1,0 +1,225 @@
+#include "contiki.h"
+#include "net/netstack.h"
+#include "net/nullnet/nullnet.h"
+#include <stdio.h>
+
+static void transmit_done(void *ptr) {
+  printf("Transmission completed, switching to listening mode\n");
+  // Thực hiện các hành động cụ thể khi chuyển sang chế độ lắng nghe
+}
+
+PROCESS(example_process, "Example process");
+AUTOSTART_PROCESSES(&example_process);
+
+PROCESS_THREAD(example_process, ev, data)
+{
+  PROCESS_BEGIN();
+
+  // Đăng ký callback cho sự kiện "transmission complete"
+  NETSTACK_MAC.transmit.done = transmit_done;
+
+  // Thực hiện các hành động khác trong quá trình chạy process
+
+  PROCESS_END();
+}
+//////////////////////////////////////////////////////
+#include "contiki.h"
+#include "net/netstack.h"
+#include "net/mac/nullmac/nullmac.h"
+#include <stdio.h>
+
+PROCESS(example_process, "Example process");
+AUTOSTART_PROCESSES(&example_process);
+
+PROCESS_THREAD(example_process, ev, data)
+{
+  PROCESS_BEGIN();
+
+  while(1) {
+    if(NETSTACK_MAC.transmitting()) {
+      printf("Node is in transmitting mode\n");
+      // Thực hiện các hành động khi node đang trong chế độ truyền
+    } else if(NETSTACK_MAC.receiving()) {
+      printf("Node is in listening mode\n");
+      // Thực hiện các hành động khi node đang trong chế độ lắng nghe
+    }
+
+    // Thực hiện các hành động khác trong quá trình chạy process
+  }
+
+  PROCESS_END();
+}
+#include "contiki.h"
+#include "net/netstack.h"
+#include "net/packetbuf.h"
+#include "dev/leds.h"
+#include <string.h>
+
+PROCESS(example_process, "Example process");
+AUTOSTART_PROCESSES(&example_process);
+
+static linkaddr_t dest_addr = {{ 2, 0 }}; // Địa chỉ của nút kia
+
+PROCESS_THREAD(example_process, ev, data)
+{
+  static struct etimer periodic_timer;
+  static int sequence_number = 0;
+
+  PROCESS_BEGIN();
+
+  while(1) {
+    // Gửi gói tin từ nút hiện tại đến nút khác
+    char packet_data[20];
+    sprintf(packet_data, "Hello %d from node 1!", sequence_number);
+    packetbuf_clear();
+    packetbuf_copyfrom(packet_data, strlen(packet_data));
+    NETSTACK_MAC.send(&dest_addr, NULL);
+
+    // Chờ một khoảng thời gian trước khi gửi gói tin tiếp theo
+    etimer_set(&periodic_timer, 5 * CLOCK_SECOND);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&periodic_timer));
+
+    // Chờ để nhận phản hồi từ nút kia
+    PROCESS_WAIT_EVENT_UNTIL(ev == PROCESS_EVENT_POLL);
+
+    // Nhận phản hồi từ nút kia và in ra nội dung của gói tin
+    if (packetbuf_datalen() > 0) {
+      printf("Received response from node 2: %s\n", (char *)packetbuf_dataptr());
+    }
+
+    sequence_number++;
+  }
+
+  PROCESS_END();
+}
+/*
+ * Copyright (c) 2007, Swedish Institute of Computer Science.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the Institute nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE INSTITUTE AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE INSTITUTE OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * This file is part of the Contiki operating system.
+ *
+ */
+
+/**
+ * \file
+ *         Testing the broadcast layer in Rime
+ * \author
+ *         Adam Dunkels <adam@sics.se>
+ */
+
+#include "contiki.h"
+#include "net/rime/rime.h"
+#include "random.h"
+#include "net/netstack.h"
+#include "dev/button-sensor.h"
+
+#include "dev/leds.h"
+
+#include <stdio.h>
+#include <netstack.h>
+/*---------------------------------------------------------------------------*/
+PROCESS(example_broadcast_process, "Broadcast example");
+AUTOSTART_PROCESSES(&example_broadcast_process);
+/*---------------------------------------------------------------------------*/
+static void
+broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
+{
+  printf("broadcast message received from %d.%d: '%s'\n",
+         from->u8[0], from->u8[1], (char *)packetbuf_dataptr());
+}
+static void broadcast_sent(struct broadcast_conn *c, int status, int num_tx) {
+  if(status == MAC_TX_OK) {
+    printf("broadcast message sent\n");
+    if(NETSTACK_RADIO.receiving_packet()) {
+      printf("transmions\n");
+    }
+  }
+}
+
+static const struct broadcast_callbacks broadcast_call = {broadcast_recv, broadcast_sent};
+//static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
+static struct broadcast_conn broadcast;
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(example_broadcast_process, ev, data)
+{
+  static struct etimer et;
+
+  PROCESS_EXITHANDLER(broadcast_close(&broadcast);)
+
+  PROCESS_BEGIN();
+
+  broadcast_open(&broadcast, 129, &broadcast_call);
+
+  while(1) {
+
+    /* Delay 2-4 seconds */
+    etimer_set(&et, CLOCK_SECOND * 4 + random_rand() % (CLOCK_SECOND * 4));
+
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+    packetbuf_copyfrom("Hello", 6);
+    broadcast_send(&broadcast);
+    printf("broadcast message sent\n");
+  }
+
+  PROCESS_END();
+}
+/*---------------------------------------------------------------------------*/
+/*#include "lpm.h"
+
+// Lấy thời gian chuyển đổi từ chế độ CPU sang LPM của node
+clock_time_t last_residency_time = lpm_last_residency_time();
+
+// In ra thời gian chuyển đổi từ chế độ CPU sang LPM
+printf("Thời gian chuyển đổi từ chế độ CPU sang LPM: %lu milliseconds\n", (unsigned long)(last_residency_time * 1000 / CLOCK_SECOND));
+==================================================
+#include "lpm.h"
+#include "sys/etimer.h"
+#include <stdio.h>
+
+// In thời gian LPM residency
+void print_lpm_residency_time() {
+  clock_time_t residency_time = lpm_last_residency_time();
+  printf("Thời gian ở trong chế độ LPM kể từ lần cuối cùng chuyển đổi: %lu ticks\n", (unsigned long)residency_time);
+}
+
+// Hàm chính
+PROCESS_THREAD(lpm_residency_process, ev, data)
+{
+  PROCESS_BEGIN();
+
+  // In thời gian LPM residency mỗi giây
+  while(1) {
+    etimer_set(&et, CLOCK_SECOND);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+    print_lpm_residency_time();
+  }
+
+  PROCESS_END();
+}
+
+*/ 

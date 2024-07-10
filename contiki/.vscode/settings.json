@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "rtimer-arch.h": "c",
+        "powertrace.h": "c"
+    }
+}
